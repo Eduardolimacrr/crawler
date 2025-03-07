@@ -1,5 +1,4 @@
 const fs = require('fs');
-const readline = require('readline');
 const playwright = require('playwright');
 
 const inputFilePath = 'crawler-test.csv';
@@ -76,7 +75,7 @@ async function processarArquivo() {
   const linhas = fs.readFileSync(inputFilePath, 'utf8').split('\n'); // Lê todas as linhas do CSV
 
   const navegador = await playwright.chromium.launch({
-    headless: false,
+    headless: false, ///mostra a pagina executando o comando
     slowMo: 100,
     args: ['--disable-blink-features=AutomationControlled', '--disable-gpu', '--disable-dev-shm-usage']
   });
@@ -108,9 +107,9 @@ async function processarArquivo() {
     }
 
     if (linkNomeValido) {
-      fs.appendFileSync(outputFilePath, `${linha},${linkNomeValido}\n`, 'utf8');
+      fs.appendFileSync(outputFilePath, `${linha},${linkNomeValido}, OK\n`, 'utf8');
     } else {
-      console.log(`❌ Nenhuma URL válida encontrada para: ${nome}`);
+      fs.appendFileSync(outputFilePath, `${linha}, ERRO\n`, 'utf8');
     }
   }
 
