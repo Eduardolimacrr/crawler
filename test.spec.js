@@ -1,8 +1,10 @@
 const fs = require('fs');
 const playwright = require('playwright');
+const { default: test } = require('playwright/test');
 
 const inputFilePath = 'crawler-test.csv';
 const outputFilePath = 'urls-validas.csv';
+
 
 async function buscarNoGoogle(palavras, navegador) {
   const userAgents = [
@@ -118,3 +120,4 @@ async function processarArquivo() {
 }
 
 processarArquivo();
+
