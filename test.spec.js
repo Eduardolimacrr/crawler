@@ -1,123 +1,116 @@
-const fs = require('fs');
-const playwright = require('playwright');
-const { default: test } = require('playwright/test');
+import { test, expect, chromium } from '@playwright/test';
+import Papa from 'papaparse';
+import fs from 'fs';
 
 const inputFilePath = 'crawler-test.csv';
 const outputFilePath = 'urls-validas.csv';
 
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36'
+];
 
-async function buscarNoGoogle(palavras, navegador) {
-  const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36'
-  ];
+// Carrega progresso salvo /////////////
+function loadProgress() {
+  if (fs.existsSync(outputFilePath)) {
+    const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+    return new Set(fileContent.split('\n').map(line => line.split(',')[1]?.trim()).filter(Boolean));
+  }
+  return new Set();
+}
+// Carrega progresso salvo /////////////
 
-  const userAgentSelecionado = userAgents[Math.floor(Math.random() * userAgents.length)];
-  const pagina = await navegador.newPage();
+test.setTimeout(0);
 
-  try {
-    await pagina.setViewportSize({ width: 1280, height: 720 });
-    await pagina.setExtraHTTPHeaders({
-      'User-Agent': userAgentSelecionado,
-      'Accept-Language': 'en-US,en;q=0.9',
-    });
+test('Search on Google', async () => {
+  const browser = await chromium.launch({
+    headless: false,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-infobars',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-gpu', 
+      '--disable-dev-shm-usage',     
+    ]
+  });
 
-    console.log(`✅ Acessando o Google para pesquisar por: ${palavras}`);
-    await pagina.goto(`https://www.google.com/search?q=${encodeURIComponent(palavras)}`, { waitUntil: 'domcontentloaded' });
-    await pagina.waitForTimeout(Math.random() * 3000 + 1000);
+  const context = await browser.newContext({
+    userAgent: userAgents[Math.floor(Math.random() * userAgents.length)]
+  });
 
-    console.log("📄 Aguardando resultados...");
-    const links = await pagina.evaluate(() => {
+  const page = await context.newPage();
+
+  // Lê os dados da planilha
+  const csvFile = fs.readFileSync(inputFilePath, 'utf8');
+  const parsedData = Papa.parse(csvFile, {
+    header: true,
+    skipEmptyLines: true
+  });
+
+
+  ///Processa todas as empresas, se ja estiver salvo ele pula//////////
+  const progressoSalvo = loadProgress();
+
+  for (const empresa of parsedData.data) {
+    if (progressoSalvo.has(empresa.main_domain)) {
+      console.log(`⚠️ Pulando ${empresa.main_domain}, já processado.`);
+      continue;
+    }
+  ///Processa todas as empresas, se ja estiver salvo ele pula//////////
+
+    const searchQuery1 = empresa.nome;
+    console.log(`Buscando por: ${searchQuery1}`);
+    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(searchQuery1)}`);
+
+    const searchQuery = empresa.main_domain;
+    console.log(`Buscando por: ${searchQuery}`);
+    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`);
+
+    const links = await page.evaluate(() => {
       return Array.from(document.querySelectorAll('a'))
         .map(el => el.href)
-        .filter(link => {
-          return (link.startsWith('http://') || link.startsWith('https://')) && !link.includes('google.com');
-        })
+        .filter(link => link.startsWith('http') && !link.includes('google.com'))
         .slice(0, 5);
     });
 
-    console.log("🔗 Links encontrados:", links);
-    return links;
-  } catch (erro) {
-    console.error("❌ Erro ao buscar no Google:", erro);
-    return [];
-  } finally {
-    await pagina.close();
-  }
-}
+    console.log("Links encontrados: ", links);
+    expect(links.length).toBeGreaterThan(0);
 
-function validarLinks(links, dominio) {
-  const urlEsperadaComWWW = `https://www.${dominio.toLowerCase()}`;
-  const urlEsperadaSemWWW = `https://${dominio.toLowerCase()}`;
+    function validarLinks(links, dominio) {
+      const urlEsperadaComWWW = `https://www.${dominio.toLowerCase()}`;
+      const urlEsperadaSemWWW = `https://${dominio.toLowerCase()}`;
+      console.log(`Verificando URLs: '${urlEsperadaComWWW}' ou '${urlEsperadaSemWWW}'`);
 
-  console.log(`🔍 Verificando se as URLs '${urlEsperadaComWWW}' ou '${urlEsperadaSemWWW}' existem nos links...`);
+      for (let link of links) {
+        try {
+          const urlBase = new URL(link).origin;
+          console.log(`🌐 URL base encontrada: ${urlBase}`);
 
-  for (let i = 0; i < links.length; i++) {
-    const link = links[i];
-
-    try {
-      const urlBase = new URL(link).origin;
-      console.log(`🌐 URL base encontrada: ${urlBase}`);
-
-      if (urlBase.toLowerCase() === urlEsperadaComWWW || urlBase.toLowerCase() === urlEsperadaSemWWW) {
-        console.log(`✅ Encontrei o site correspondente: ${urlBase}`);
-        return urlBase;
+          if (urlBase.toLowerCase() === urlEsperadaComWWW || urlBase.toLowerCase() === urlEsperadaSemWWW) {
+            console.log(`✅ Encontrei o site correspondente: ${searchQuery}`);
+            return 'OK';
+          }
+        } catch (erro) {
+          console.error("⚠️ Erro ao processar URL:", erro);
+        }
       }
-    } catch (erro) {
-      console.error("⚠️ Erro ao processar URL:", erro);
+
+      console.log(`❌ Nenhum site encontrado para '${searchQuery1}'`);
+      return 'ERRO';
     }
+
+    const resultadoValidacao = validarLinks(links, empresa.main_domain);
+    
+    fs.appendFileSync(outputFilePath, `${empresa.nome},${empresa.main_domain},${resultadoValidacao}\n`, 'utf8');
+
+    await page.waitForTimeout(6000);
+    await page.mouse.wheel(0, 1000);
+    await page.waitForTimeout(1000);
   }
 
-  console.log(`❌ Nenhum site encontrado com o domínio '${dominio}' nos links.`);
-  return null;
-}
-
-async function processarArquivo() {
-  const linhas = fs.readFileSync(inputFilePath, 'utf8').split('\n'); // Lê todas as linhas do CSV
-
-  const navegador = await playwright.chromium.launch({
-    headless: false, ///mostra a pagina executando o comando
-    slowMo: 100,
-    args: ['--disable-blink-features=AutomationControlled', '--disable-gpu', '--disable-dev-shm-usage']
-  });
-
-  const contexto = await navegador.newContext();
-
-  for (let i = 0; i < linhas.length; i++) { // Percorre todas as linhas
-    const linha = linhas[i].trim();
-    if (linha === '') continue; // Ignora linhas vazias
-
-    const colunas = linha.split(',');
-    if (colunas.length < 5) {
-      console.log(`❌ Dados inválidos na linha ${i + 1}: ${linha}`);
-      continue;
-    }
-
-    const nome = colunas[2]; // Ajuste para a posição correta do nome
-    const main_domain = colunas[4]; // Ajuste para a posição correta do domínio
-
-    console.log(`🔍 Buscando informações para: ${nome}`);
-
-    const resultadoNome = await buscarNoGoogle(nome, contexto);
-    let linkNomeValido = validarLinks(resultadoNome, main_domain);
-
-    if (!linkNomeValido) {
-      console.log(`🔍 Nome não encontrado, buscando pelo domínio: ${main_domain}`);
-      const resultadoDominio = await buscarNoGoogle(main_domain, contexto);
-      linkNomeValido = validarLinks(resultadoDominio, main_domain);
-    }
-
-    if (linkNomeValido) {
-      fs.appendFileSync(outputFilePath, `${linha},${linkNomeValido}, OK\n`, 'utf8');
-    } else {
-      fs.appendFileSync(outputFilePath, `${linha}, ERRO\n`, 'utf8');
-    }
-  }
-
-  await navegador.close();
-  console.log('✅ Processamento concluído!');
-}
-
-processarArquivo();
-
+  await browser.close();
+});
