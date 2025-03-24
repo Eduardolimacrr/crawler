@@ -1,4 +1,5 @@
 import { test, expect, chromium } from '@playwright/test';
+import { Activity } from '@temporalio/activity'; 
 import Papa from 'papaparse';
 import fs from 'fs';
 
@@ -15,11 +16,23 @@ const userAgents = [
 function loadProgress() {
   if (fs.existsSync(outputFilePath)) {
     const fileContent = fs.readFileSync(outputFilePath, 'utf8');
-    return new Set(fileContent.split('\n').map(line => line.split(',')[1]?.trim()).filter(Boolean));
+    const lines = fileContent.split('\n').filter(Boolean); // Filtra linhas vazias
+    return new Set(lines.map(line => line.split(',')[0]?.replace(/"/g, '').trim())); // Alterado para ID
   }
   return new Set();
 }
 // Carrega progresso salvo /////////////
+
+// Salva progresso /////////////
+function saveProgress(empresa, resultadoValidacao, urlEncontrada = '') {
+  try {
+    fs.appendFileSync(outputFilePath, `"${empresa.id}","${empresa.nome}",${empresa.main_domain},${resultadoValidacao},${urlEncontrada}\n`, 'utf8'); // Alterado para ID, adicionado nome
+  } catch (error) {
+    console.error("⚠️ Erro ao salvar o resultado:", error);
+  }
+}
+// Salva progresso /////////////
+
 
 test.setTimeout(0);
 
@@ -35,6 +48,8 @@ test('Search on Google', async () => {
       '--disable-features=IsolateOrigins,site-per-process',
       '--disable-gpu', 
       '--disable-dev-shm-usage',     
+      '--single-process' // Adiciona esta opção para rodar em um único processo
+
     ]
   });
 
@@ -52,15 +67,14 @@ test('Search on Google', async () => {
   });
   // Lê os dados da planilha /////////////
 
-  // Processa todas as empresas, se já estiver salvo ele pula /////////////
+  // Carrega progresso salvo
   const progressoSalvo = loadProgress();
 
   for (const empresa of parsedData.data) {
-    if (progressoSalvo.has(empresa.main_domain)) {
-      console.log(`⚠️ Pulando ${empresa.main_domain}, já processado.`);
+    if (progressoSalvo.has(empresa.id)) { // Alterado para ID
+      console.log(`⚠️ Pulando ${empresa.id}, já processado.`);
       continue;
     }
-  // Processa todas as empresas, se já estiver salvo ele pula /////////////
 
     // Declara searchQuery1 (nome da empresa) e searchQuery2 (domínio)
     const searchQuery1 = empresa.nome;
@@ -85,6 +99,7 @@ test('Search on Google', async () => {
     const links = await extrairLinks();
     console.log("🔗 Links encontrados: ", links);
     expect(links.length).toBeGreaterThan(0);
+    // Busca pelo nome da empresa
 
     // Valida links encontrados /////////////
     function validarLinks(links, dominio) {
@@ -104,37 +119,44 @@ test('Search on Google', async () => {
 
           if (urlVariacoes.includes(urlBase.toLowerCase())) {
             console.log(`✅ Site encontrado: ${urlBase}`);
-            return 'OK';
+            return { resultado: 'OK', urlEncontrada: urlBase };  // Retorna o resultado e a URL
           }
         } catch (erro) {
           console.error("⚠️ Erro ao processar URL:", erro);
         }
       }
       console.log(`❌ Nenhuma correspondência encontrada para '${dominio}'`);
-      return 'ERRO';
+      return { resultado: 'ERRO', urlEncontrada: '' };  // Retorna o resultado e uma URL vazia
     }
     // Valida links encontrados /////////////
 
-    // Pesquisa diretamente a url caso não encontre dentro dos 20 sites /////////////
-    let resultadoValidacao = validarLinks(links, empresa.main_domain); ///com http
+    // Pesquisa diretamente a url caso não encontre dentro dos 20 sites
+    let validacaoResultado = validarLinks(links, empresa.main_domain);
+    let resultadoValidacao = validacaoResultado.resultado;
+    let urlEncontrada = validacaoResultado.urlEncontrada;
 
     if (resultadoValidacao === 'ERRO') {
       console.log(`🔄 Nenhuma correspondência encontrada, buscando diretamente: ${empresa.main_domain}`);
-      await page.goto(`https://www.google.com/search?q=${encodeURIComponent(empresa.main_domain)}`);
+      try {
+        await page.goto(`https://${encodeURIComponent(empresa.main_domain)}`);
+        await page.waitForTimeout(3000);
+        const novosLinks = await extrairLinks();
+        console.log("🔗 Links encontrados na segunda busca:", novosLinks);
 
-      await page.waitForTimeout(3000);
-      const novosLinks = await extrairLinks();
-      console.log("🔗 Links encontrados na segunda busca:", novosLinks);
+        // Valida novamente os links encontrados
+        validacaoResultado = validarLinks(novosLinks, empresa.main_domain);
+        resultadoValidacao = validacaoResultado.resultado;
+        urlEncontrada = validacaoResultado.urlEncontrada;
 
-      // Valida novamente os links encontrados
-      resultadoValidacao = validarLinks(novosLinks, empresa.main_domain);
-      // Valida novamente os links encontrados
+
+      } catch (error) {
+        console.error("⚠️ Erro ao buscar diretamente pelo domínio:", error);
+      }
     }
-    // Pesquisa diretamente a url caso não encontre dentro dos 20 sites /////////////
 
-    // Salva o resultado /////////////
-    fs.appendFileSync(outputFilePath, `${empresa.nome},${empresa.main_domain},${resultadoValidacao}\n`, 'utf8');
-    // Salva o resultado /////////////
+    // Salva o resultado
+    saveProgress(empresa, resultadoValidacao, urlEncontrada);
+    // Salva o resultado
 
     await page.waitForTimeout(3000);
     await page.mouse.move(100, 200);
