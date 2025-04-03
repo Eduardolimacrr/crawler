@@ -34,7 +34,7 @@ Este projeto utiliza o **Playwright** para buscar informações no Google e vali
    ```
 
 ## Uso
-1. Coloque os dados das empresas no arquivo `crawler-test.csv` no seguinte formato:
+1. Coloque os dados das empresas no arquivo que desejar no seguinte formato:
    ```csv
    id,nome,main_domain
    1,Empresa X,empresa.com.br
